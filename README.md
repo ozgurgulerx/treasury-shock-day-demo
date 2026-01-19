@@ -298,10 +298,281 @@ This workflow is the **first working component** of the multi-agent system:
 | Phase 4: Multi-Agent | Sanctions Agent will call this for counterparty screening |
 | Phase 6: Finale | Evidence bundle includes screening audit trail |
 
-**Next Steps to Full Integration:**
-1. Wrap as MCP tool or Semantic Kernel plugin
-2. Create Sanctions Agent that calls this workflow
-3. Integrate into Treasury Shock Coordinator orchestration
+---
+
+### IMPLEMENTED: Liquidity Gate (MCP Tool)
+
+A production-ready **intraday liquidity impact simulation** exposed as an MCP tool for AI agents. This is the treasury math engine that determines if releasing a payment would breach minimum cash buffers.
+
+#### What Was Built
+
+| Component | Description | Status |
+|-----------|-------------|--------|
+| **Azure Function** | `liquidity-gate-func` (Python, Premium EP1 plan) | ✅ |
+| **MCP Tool Trigger** | `compute_liquidity_impact` with full schema | ✅ |
+| **Data Pipeline** | BankSim → Treasury format transformation | ✅ |
+| **Blob Storage** | Curated files in `sttreasurydemo01` | ✅ |
+| **Foundry Integration** | Registered in AI Foundry tool catalog | ✅ |
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         LIQUIDITY GATE MCP TOOL                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐      ┌──────────────────────┐      ┌───────────────┐  │
+│  │  AI Foundry     │      │   Azure Function     │      │ Azure Blob    │  │
+│  │  Agent          │─────▶│   liquidity-gate-    │─────▶│ Storage       │  │
+│  │                 │ MCP  │   func               │      │               │  │
+│  │  "Check payment │      │                      │      │ treasury-demo │  │
+│  │   TXN-EMRG-001" │      │  ┌────────────────┐  │      │ container     │  │
+│  └─────────────────┘      │  │ MCP Tool       │  │      │               │  │
+│           │               │  │ Trigger        │  │      │ ┌───────────┐ │  │
+│           │               │  │                │  │      │ │ledger_    │ │  │
+│           ▼               │  │ compute_       │  │      │ │today.csv  │ │  │
+│  ┌─────────────────┐      │  │ liquidity_     │──┼─────▶│ │(3,001 txn)│ │  │
+│  │  Response:      │      │  │ impact         │  │      │ └───────────┘ │  │
+│  │  - HOLD/RELEASE │      │  └────────────────┘  │      │               │  │
+│  │  - Breach: $50k │◀─────│                      │      │ ┌───────────┐ │  │
+│  │  - Alternatives │      │  Uses:               │      │ │starting_  │ │  │
+│  └─────────────────┘      │  - Managed Identity  │──────▶│ │balances   │ │  │
+│                           │  - DefaultAzureCred  │      │ │.csv (259) │ │  │
+│                           └──────────────────────┘      │ └───────────┘ │  │
+│                                                         │               │  │
+│                                                         │ ┌───────────┐ │  │
+│                                                         │ │buffers    │ │  │
+│                                                         │ │.json (6)  │ │  │
+│                                                         │ └───────────┘ │  │
+│                                                         └───────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Data Sources
+
+| File | Location | Records | Purpose |
+|------|----------|---------|---------|
+| `ledger_today.csv` | `curated/` | 3,001 | Today's payment queue (from BankSim) |
+| `starting_balances.csv` | `curated/` | 259 | Account balances at start of day |
+| `buffers.json` | `curated/` | 6 | Minimum buffer thresholds per entity/currency |
+| `banksim.csv` | `raw/banksim/` | 594,643 | Original BankSim synthetic transactions |
+
+**Data Origin:** [Kaggle BankSim Dataset](https://www.kaggle.com/datasets/ealaxi/banksim1) (Lopez-Rojas & Axelsson) - synthetic bank transactions transformed into treasury format.
+
+#### Computation Flow
+
+```
+1. INPUT: payment_id = "TXN-EMRG-001"
+                ↓
+2. LOOKUP: Find payment in ledger_today.csv
+   → $250,000 USD, ACC-BAN-001, BankSubsidiary_TR, ACME Trading LLC
+                ↓
+3. LOOKUP: Get starting balance from starting_balances.csv
+   → ACC-BAN-001 (USD): $2,200,000
+                ↓
+4. LOOKUP: Get buffer threshold from buffers.json
+   → BankSubsidiary_TR (USD): $2,000,000 minimum, cutoff 15:00
+                ↓
+5. SIMULATE: Walk through all transactions chronologically
+   ┌─────────────────────────────────────────┐
+   │ Starting balance:     $2,200,000        │
+   │ Release ACME payment: -$250,000         │
+   │ ─────────────────────────────────       │
+   │ Projected balance:    $1,950,000        │
+   │ Buffer threshold:     $2,000,000        │
+   │ ─────────────────────────────────       │
+   │ BREACH:               $50,000 shortfall │
+   └─────────────────────────────────────────┘
+                ↓
+6. OUTPUT: Structured JSON response
+   - breach: true
+   - gap: $50,000
+   - recommendation: HOLD
+   - alternatives: [delay, partial release, escalate]
+   - audit: {run_id, timestamp, data_snapshot}
+```
+
+#### MCP Tool Schema
+
+**Tool Name:** `compute_liquidity_impact`
+
+**Description:** Compute intraday liquidity impact for a payment. Determines if releasing a payment would breach the minimum cash buffer, when the breach would occur, and by how much.
+
+**Input Schema:**
+```json
+{
+  "payment_id": "string - Transaction ID (e.g., TXN-EMRG-001)",
+
+  // OR for hypothetical payments:
+  "amount": "number - Payment amount",
+  "currency": "string - USD, TRY, EUR",
+  "account_id": "string - e.g., ACC-BAN-001",
+  "entity": "string - e.g., BankSubsidiary_TR",
+  "beneficiary_name": "string (optional)",
+  "timestamp_utc": "string (optional) - YYYY-MM-DD HH:MM:SS"
+}
+```
+
+**Output Schema:**
+```json
+{
+  "buffer_breach_risk": {
+    "breach": true,
+    "first_breach_time": "2026-01-19 10:25:00",
+    "gap": 50000.0,
+    "projected_balance_min": 1950000.0,
+    "buffer_threshold": 2000000.0,
+    "headroom": -50000.0
+  },
+  "payment_context": {
+    "payment_id": "TXN-EMRG-001",
+    "amount": 250000.0,
+    "currency": "USD",
+    "beneficiary": "ACME Trading LLC",
+    "account_id": "ACC-BAN-001",
+    "entity": "BankSubsidiary_TR"
+  },
+  "account_summary": {
+    "start_of_day_balance": 2200000.0,
+    "total_outflow": 250000.0,
+    "total_inflow": 0,
+    "net_flow": -250000.0,
+    "end_of_day_balance": 1950000.0
+  },
+  "concentration_analysis": {
+    "top_beneficiaries": [...],
+    "largest_single_payment": 250000.0
+  },
+  "anomalies": [],
+  "recommendation": {
+    "action": "HOLD",
+    "reason": "Payment would breach buffer by $50,000.00",
+    "alternatives": [
+      "Delay payment until inflows received",
+      "Request partial release",
+      "Escalate to treasury for funding"
+    ]
+  },
+  "audit": {
+    "run_id": "a6d20fb9",
+    "timestamp_utc": "2026-01-19T17:48:07.552988Z",
+    "data_snapshot": {
+      "ledger_rows": 3001,
+      "balance_rows": 259,
+      "buffer_rules": 6
+    }
+  }
+}
+```
+
+#### MCP Connection Details
+
+| Property | Value |
+|----------|-------|
+| **Function App** | `liquidity-gate-func` |
+| **MCP Endpoint** | `https://liquidity-gate-func.azurewebsites.net` |
+| **SSE Endpoint** | `/runtime/webhooks/mcp/sse` |
+| **Authentication** | `x-functions-key` header with `mcp_extension` system key |
+| **Authorization** | Anonymous (no key required) |
+
+**Foundry Tool Catalog Configuration:**
+```
+Remote MCP Server endpoint: https://liquidity-gate-func.azurewebsites.net/runtime/webhooks/mcp/sse
+Authentication: Key-based (or None if Anonymous)
+Credential: x-functions-key : <mcp_extension_key>
+```
+
+#### Demo Scenario: ACME Emergency Payment
+
+| Metric | Value |
+|--------|-------|
+| Payment ID | TXN-EMRG-001 |
+| Beneficiary | ACME Trading LLC |
+| Amount | $250,000 USD |
+| Account | ACC-BAN-001 (BankSubsidiary_TR) |
+| Scheduled Time | 2026-01-19 10:25:00 |
+| Starting Balance | $2,200,000 |
+| Buffer Threshold | $2,000,000 |
+| **Projected Balance** | **$1,950,000** |
+| **BREACH** | **$50,000 shortfall** |
+| **Decision** | **HOLD** |
+
+#### Test Prompts for Foundry Agent
+
+```
+# Test 1: Check existing emergency payment (BREACH)
+"Check if we can release payment TXN-EMRG-001"
+
+# Test 2: Shorter version
+"What is the liquidity impact of payment TXN-EMRG-001?"
+
+# Test 3: Hypothetical payment (NO BREACH)
+"What would be the liquidity impact if we made a $50,000 USD payment
+ from account ACC-Ban-002 for entity BankSubsidiary_TR?"
+```
+
+#### Agent System Prompt
+
+```
+You are a Treasury Operations Agent responsible for managing payment
+releases and liquidity risk at a financial institution.
+
+## Your Role
+You help treasury analysts and operations teams make informed decisions
+about payment releases by assessing liquidity impact before approving
+outgoing payments.
+
+## Available Tool
+You have access to the `compute_liquidity_impact` tool which calculates
+whether releasing a payment would breach minimum cash buffer thresholds.
+
+## Decision Framework
+Based on the tool response:
+
+| Result        | Action  | Your Response                              |
+|---------------|---------|-------------------------------------------|
+| breach: false | RELEASE | Approve the payment, confirm headroom     |
+| breach: true  | HOLD    | Recommend holding, explain gap, suggest   |
+|               |         | alternatives                               |
+
+## Response Guidelines
+1. Always call the tool before making recommendations
+2. Clearly state the decision: RELEASE or HOLD
+3. Include key metrics: buffer threshold, projected balance, gap/headroom
+4. If HOLD, present the alternatives from the tool response
+5. Reference the audit trail (run_id, timestamp) for compliance
+```
+
+#### Files Created
+
+```
+functions/LiquidityGate/
+├── function_app.py          # Main function with MCP tool trigger
+├── host.json                # Extension bundle config (Experimental)
+├── requirements.txt         # Python dependencies
+├── local.settings.json      # Local dev settings
+├── deploy-function.json     # ARM template
+└── .funcignore              # Deployment excludes
+
+data/
+├── bs140513_032310.csv      # Raw BankSim data (594,643 transactions)
+├── transform_banksim.py     # Transformation script
+└── curated/
+    ├── ledger_today.csv     # Today's payment queue (3,001 txn)
+    ├── starting_balances.csv # Account balances (259 accounts)
+    └── buffers.json         # Buffer thresholds (6 rules)
+```
+
+#### Azure Resources
+
+| Resource | Name | Location | Purpose |
+|----------|------|----------|---------|
+| Function App | liquidity-gate-func | UK South | Hosts MCP tool |
+| App Service Plan | liquidity-gate-plan | UK South | Premium EP1 |
+| Storage Account | stliquidityfunc01 | UK South | Function state |
+| Storage Account | sttreasurydemo01 | UK South | Treasury data |
+| Blob Container | treasury-demo | - | Curated data files |
 
 ---
 
@@ -338,6 +609,7 @@ This workflow is the **first working component** of the multi-agent system:
 
 | Tool Type | Implementation | Status |
 |-----------|----------------|--------|
+| **Liquidity Gate** | `compute_liquidity_impact` MCP tool via Azure Function | ✅ |
 | **Sanctions Screening** | OFAC SDN screening via Logic App (SanctionsScreeningFlow) | ✅ |
 | **SaaS Connector** | Morningstar market data provider (or alternative) via MCP | ⬜ |
 | **Logic Apps Connector** | Expose Logic Apps flows as MCP tools (access to 1,400+ systems) | ⬜ |
