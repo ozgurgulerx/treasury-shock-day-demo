@@ -1,0 +1,650 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "When_a_HTTP_request_is_received": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Name to screen against sanctions list"
+              },
+              "country": {
+                "type": "string",
+                "description": "Optional country filter"
+              },
+              "context": {
+                "type": "object",
+                "properties": {
+                  "payment_id": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "currency": { "type": "string" }
+                }
+              }
+            },
+            "required": ["name"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Initialize_decision": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "decision",
+              "type": "string",
+              "value": "CLEAR"
+            }
+          ]
+        },
+        "runAfter": {}
+      },
+      "Initialize_bestScore": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "bestScore",
+              "type": "integer",
+              "value": 0
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_decision": ["Succeeded"]
+        }
+      },
+      "Initialize_bestMatch": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "bestMatch",
+              "type": "object",
+              "value": {}
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_bestScore": ["Succeeded"]
+        }
+      },
+      "Initialize_matchType": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "matchType",
+              "type": "string",
+              "value": "NONE"
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_bestMatch": ["Succeeded"]
+        }
+      },
+      "Initialize_matchReason": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "matchReason",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_matchType": ["Succeeded"]
+        }
+      },
+      "Initialize_searchScore": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "searchScore",
+              "type": "float",
+              "value": 0
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_matchReason": ["Succeeded"]
+        }
+      },
+      "Normalize_Name": {
+        "type": "Compose",
+        "inputs": "@toUpper(trim(triggerBody()?['name']))",
+        "runAfter": {
+          "Initialize_searchScore": ["Succeeded"]
+        }
+      },
+      "Build_Fuzzy_Query": {
+        "type": "Compose",
+        "inputs": "@concat(replace(outputs('Normalize_Name'), ' ', '~ AND '), '~')",
+        "runAfter": {
+          "Normalize_Name": ["Succeeded"]
+        }
+      },
+      "Query_Azure_AI_Search": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "https://chatops-ozguler.search.windows.net/indexes/idx-ofac-sdn-v1/docs/search?api-version=2023-11-01",
+          "headers": {
+            "Content-Type": "application/json",
+            "api-key": "${AZURE_SEARCH_API_KEY}"
+          },
+          "body": {
+            "search": "@{outputs('Build_Fuzzy_Query')}",
+            "top": 10,
+            "queryType": "full",
+            "searchFields": "primary_name,aka_names",
+            "select": "uid,primary_name,aka_names,programs,entity_type,snapshot_date",
+            "searchMode": "any"
+          }
+        },
+        "runAfter": {
+          "Build_Fuzzy_Query": ["Succeeded"]
+        }
+      },
+      "Parse_Search_Results": {
+        "type": "ParseJson",
+        "inputs": {
+          "content": "@body('Query_Azure_AI_Search')",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "uid": { "type": "string" },
+                    "primary_name": { "type": "string" },
+                    "aka_names": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "programs": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "entity_type": { "type": "string" },
+                    "snapshot_date": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "runAfter": {
+          "Query_Azure_AI_Search": ["Succeeded"]
+        }
+      },
+      "Check_If_Results_Exist": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "greater": [
+                "@length(body('Parse_Search_Results')?['value'])",
+                0
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "For_Each_Result": {
+            "type": "Foreach",
+            "foreach": "@body('Parse_Search_Results')?['value']",
+            "actions": {
+              "Get_Candidate_Name": {
+                "type": "Compose",
+                "inputs": "@toUpper(items('For_Each_Result')?['primary_name'])",
+                "runAfter": {}
+              },
+              "Get_Search_Score": {
+                "type": "Compose",
+                "inputs": "@items('For_Each_Result')?['@search.score']",
+                "runAfter": {
+                  "Get_Candidate_Name": ["Succeeded"]
+                }
+              },
+              "Check_Exact_Match": {
+                "type": "If",
+                "expression": {
+                  "or": [
+                    {
+                      "equals": [
+                        "@outputs('Get_Candidate_Name')",
+                        "@outputs('Normalize_Name')"
+                      ]
+                    },
+                    {
+                      "contains": [
+                        "@toUpper(join(items('For_Each_Result')?['aka_names'], '|'))",
+                        "@outputs('Normalize_Name')"
+                      ]
+                    }
+                  ]
+                },
+                "actions": {
+                  "Set_Decision_BLOCK_Exact": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "decision",
+                      "value": "BLOCK"
+                    },
+                    "runAfter": {}
+                  },
+                  "Set_BestScore_98": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "bestScore",
+                      "value": 98
+                    },
+                    "runAfter": {
+                      "Set_Decision_BLOCK_Exact": ["Succeeded"]
+                    }
+                  },
+                  "Set_MatchType_Exact": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "matchType",
+                      "value": "EXACT"
+                    },
+                    "runAfter": {
+                      "Set_BestScore_98": ["Succeeded"]
+                    }
+                  },
+                  "Set_MatchReason_Exact": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "matchReason",
+                      "value": "Exact match on primary_name or aka_names"
+                    },
+                    "runAfter": {
+                      "Set_MatchType_Exact": ["Succeeded"]
+                    }
+                  },
+                  "Set_SearchScore_Exact": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "searchScore",
+                      "value": "@outputs('Get_Search_Score')"
+                    },
+                    "runAfter": {
+                      "Set_MatchReason_Exact": ["Succeeded"]
+                    }
+                  },
+                  "Set_BestMatch_Exact": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "bestMatch",
+                      "value": "@items('For_Each_Result')"
+                    },
+                    "runAfter": {
+                      "Set_SearchScore_Exact": ["Succeeded"]
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Check_High_Score_Fuzzy": {
+                      "type": "If",
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@variables('decision')",
+                                "BLOCK"
+                              ]
+                            }
+                          },
+                          {
+                            "greaterOrEquals": [
+                              "@outputs('Get_Search_Score')",
+                              8
+                            ]
+                          }
+                        ]
+                      },
+                      "actions": {
+                        "Set_Decision_BLOCK_Fuzzy": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "decision",
+                            "value": "BLOCK"
+                          },
+                          "runAfter": {}
+                        },
+                        "Set_BestScore_90": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "bestScore",
+                            "value": 90
+                          },
+                          "runAfter": {
+                            "Set_Decision_BLOCK_Fuzzy": ["Succeeded"]
+                          }
+                        },
+                        "Set_MatchType_Fuzzy_High": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "matchType",
+                            "value": "FUZZY_HIGH"
+                          },
+                          "runAfter": {
+                            "Set_BestScore_90": ["Succeeded"]
+                          }
+                        },
+                        "Set_MatchReason_Fuzzy_High": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "matchReason",
+                            "value": "@concat('High confidence fuzzy match (search score: ', string(outputs('Get_Search_Score')), ')')"
+                          },
+                          "runAfter": {
+                            "Set_MatchType_Fuzzy_High": ["Succeeded"]
+                          }
+                        },
+                        "Set_SearchScore_Fuzzy_High": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "searchScore",
+                            "value": "@outputs('Get_Search_Score')"
+                          },
+                          "runAfter": {
+                            "Set_MatchReason_Fuzzy_High": ["Succeeded"]
+                          }
+                        },
+                        "Set_BestMatch_Fuzzy_High": {
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "bestMatch",
+                            "value": "@items('For_Each_Result')"
+                          },
+                          "runAfter": {
+                            "Set_SearchScore_Fuzzy_High": ["Succeeded"]
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Check_Medium_Score_Fuzzy": {
+                            "type": "If",
+                            "expression": {
+                              "and": [
+                                {
+                                  "not": {
+                                    "equals": [
+                                      "@variables('decision')",
+                                      "BLOCK"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "greaterOrEquals": [
+                                    "@outputs('Get_Search_Score')",
+                                    4
+                                  ]
+                                }
+                              ]
+                            },
+                            "actions": {
+                              "Set_Decision_ESCALATE": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "decision",
+                                  "value": "ESCALATE"
+                                },
+                                "runAfter": {}
+                              },
+                              "Set_BestScore_75": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "bestScore",
+                                  "value": 75
+                                },
+                                "runAfter": {
+                                  "Set_Decision_ESCALATE": ["Succeeded"]
+                                }
+                              },
+                              "Set_MatchType_Fuzzy_Medium": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "matchType",
+                                  "value": "FUZZY_MEDIUM"
+                                },
+                                "runAfter": {
+                                  "Set_BestScore_75": ["Succeeded"]
+                                }
+                              },
+                              "Set_MatchReason_Fuzzy_Medium": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "matchReason",
+                                  "value": "@concat('Medium confidence fuzzy match (search score: ', string(outputs('Get_Search_Score')), ') - requires manual review')"
+                                },
+                                "runAfter": {
+                                  "Set_MatchType_Fuzzy_Medium": ["Succeeded"]
+                                }
+                              },
+                              "Set_SearchScore_Fuzzy_Medium": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "searchScore",
+                                  "value": "@outputs('Get_Search_Score')"
+                                },
+                                "runAfter": {
+                                  "Set_MatchReason_Fuzzy_Medium": ["Succeeded"]
+                                }
+                              },
+                              "Set_BestMatch_Fuzzy_Medium": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                  "name": "bestMatch",
+                                  "value": "@items('For_Each_Result')"
+                                },
+                                "runAfter": {
+                                  "Set_SearchScore_Fuzzy_Medium": ["Succeeded"]
+                                }
+                              }
+                            },
+                            "else": {
+                              "actions": {
+                                "Check_Low_Score": {
+                                  "type": "If",
+                                  "expression": {
+                                    "and": [
+                                      {
+                                        "equals": [
+                                          "@variables('decision')",
+                                          "CLEAR"
+                                        ]
+                                      },
+                                      {
+                                        "greaterOrEquals": [
+                                          "@outputs('Get_Search_Score')",
+                                          2
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "actions": {
+                                    "Set_Decision_ESCALATE_Low": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "decision",
+                                        "value": "ESCALATE"
+                                      },
+                                      "runAfter": {}
+                                    },
+                                    "Set_BestScore_60": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "bestScore",
+                                        "value": 60
+                                      },
+                                      "runAfter": {
+                                        "Set_Decision_ESCALATE_Low": ["Succeeded"]
+                                      }
+                                    },
+                                    "Set_MatchType_Partial": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "matchType",
+                                        "value": "PARTIAL"
+                                      },
+                                      "runAfter": {
+                                        "Set_BestScore_60": ["Succeeded"]
+                                      }
+                                    },
+                                    "Set_MatchReason_Partial": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "matchReason",
+                                        "value": "@concat('Low confidence partial match (search score: ', string(outputs('Get_Search_Score')), ') - manual review required')"
+                                      },
+                                      "runAfter": {
+                                        "Set_MatchType_Partial": ["Succeeded"]
+                                      }
+                                    },
+                                    "Set_SearchScore_Partial": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "searchScore",
+                                        "value": "@outputs('Get_Search_Score')"
+                                      },
+                                      "runAfter": {
+                                        "Set_MatchReason_Partial": ["Succeeded"]
+                                      }
+                                    },
+                                    "Set_BestMatch_Partial": {
+                                      "type": "SetVariable",
+                                      "inputs": {
+                                        "name": "bestMatch",
+                                        "value": "@items('For_Each_Result')"
+                                      },
+                                      "runAfter": {
+                                        "Set_SearchScore_Partial": ["Succeeded"]
+                                      }
+                                    }
+                                  },
+                                  "runAfter": {}
+                                }
+                              }
+                            },
+                            "runAfter": {}
+                          }
+                        }
+                      },
+                      "runAfter": {}
+                    }
+                  }
+                },
+                "runAfter": {
+                  "Get_Search_Score": ["Succeeded"]
+                }
+              }
+            },
+            "runAfter": {}
+          }
+        },
+        "else": {
+          "actions": {}
+        },
+        "runAfter": {
+          "Parse_Search_Results": ["Succeeded"]
+        }
+      },
+      "Build_SMS_Message": {
+        "type": "Compose",
+        "inputs": "@concat('SANCTIONS SCREENING [', variables('decision'), '] Name: ', triggerBody()?['name'], ' | Confidence: ', string(variables('bestScore')), '% | Match: ', if(equals(variables('matchType'), 'NONE'), 'None', variables('bestMatch')?['primary_name']), ' | Run: ', workflow()?['run']?['name'])",
+        "runAfter": {
+          "Check_If_Results_Exist": ["Succeeded"]
+        }
+      },
+      "Send_SMS_Notification": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "https://api.infobip.com/sms/2/text/advanced",
+          "headers": {
+            "Authorization": "App ${INFOBIP_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "messages": [
+              {
+                "destinations": [
+                  {"to": "905322000857"}
+                ],
+                "from": "447491163443",
+                "text": "@{outputs('Build_SMS_Message')}"
+              }
+            ]
+          }
+        },
+        "runAfter": {
+          "Build_SMS_Message": ["Succeeded"]
+        }
+      },
+      "Return_Response": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 200,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "decision": "@variables('decision')",
+            "confidence": "@variables('bestScore')",
+            "match_type": "@variables('matchType')",
+            "match_reason": "@variables('matchReason')",
+            "search_score": "@variables('searchScore')",
+            "best_match": "@variables('bestMatch')",
+            "all_matches": "@body('Parse_Search_Results')?['value']",
+            "input": {
+              "name": "@triggerBody()?['name']",
+              "normalized_name": "@outputs('Normalize_Name')",
+              "fuzzy_query": "@outputs('Build_Fuzzy_Query')",
+              "country": "@triggerBody()?['country']",
+              "context": "@triggerBody()?['context']"
+            },
+            "notification": {
+              "sms_attempted": true,
+              "sms_to": "+905322000857",
+              "sms_status": "@{if(equals(outputs('Send_SMS_Notification')?['statusCode'], 200), 'sent', 'failed')}"
+            },
+            "audit": {
+              "index": "idx-ofac-sdn-v1",
+              "snapshot_date": "@variables('bestMatch')?['snapshot_date']",
+              "workflow_run_id": "@workflow()?['run']?['name']",
+              "timestamp_utc": "@utcNow()",
+              "version": "2.1-sms"
+            }
+          }
+        },
+        "runAfter": {
+          "Send_SMS_Notification": ["Succeeded", "Failed"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

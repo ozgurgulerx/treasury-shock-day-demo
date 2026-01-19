@@ -1,0 +1,42 @@
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Large data files
+SDN_ENHANCED.xml
+SDN_ENHANCED.XML
+*.xml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.Python
+pip-log.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Project specific
+/doc
+/docu
+/docs
+
+# Logic Apps
+local.settings.json
