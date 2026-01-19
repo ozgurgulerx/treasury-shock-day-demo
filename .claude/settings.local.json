@@ -57,7 +57,12 @@
       "Bash(az apim product api add:*)",
       "Bash(pip3 show:*)",
       "Bash(az storage container create:*)",
-      "Bash(az storage blob upload:*)"
+      "Bash(az storage blob upload:*)",
+      "Bash(az storage blob list:*)",
+      "Bash(az functionapp:*)",
+      "Bash(func --version:*)",
+      "Bash(az deployment group create:*)",
+      "Bash(zip -r:*)"
     ]
   }
 }
