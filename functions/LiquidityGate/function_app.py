@@ -425,3 +425,137 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
         status_code=200,
         mimetype="application/json"
     )
+
+
+# =============================================================================
+# MCP Tool Trigger
+# =============================================================================
+
+# Define tool properties for the MCP tool
+TOOL_PROPERTIES_LIQUIDITY_IMPACT = json.dumps([
+    {
+        "propertyName": "payment_id",
+        "propertyType": "string",
+        "description": "The transaction ID of a queued payment to simulate releasing (e.g., TXN-EMRG-001). Either payment_id or hypothetical_payment must be provided.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "amount",
+        "propertyType": "number",
+        "description": "Payment amount for hypothetical payment simulation. Required if payment_id is not provided.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "currency",
+        "propertyType": "string",
+        "description": "Currency code (USD, TRY, EUR) for hypothetical payment. Required if payment_id is not provided.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "account_id",
+        "propertyType": "string",
+        "description": "Account ID for hypothetical payment (e.g., ACC-BAN-001). Required if payment_id is not provided.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "entity",
+        "propertyType": "string",
+        "description": "Entity name for hypothetical payment (e.g., BankSubsidiary_TR). Required if payment_id is not provided.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "beneficiary_name",
+        "propertyType": "string",
+        "description": "Beneficiary name for hypothetical payment.",
+        "isRequired": False
+    },
+    {
+        "propertyName": "timestamp_utc",
+        "propertyType": "string",
+        "description": "Timestamp for hypothetical payment (format: YYYY-MM-DD HH:MM:SS).",
+        "isRequired": False
+    }
+])
+
+
+@app.generic_trigger(
+    arg_name="context",
+    type="mcpToolTrigger",
+    toolName="compute_liquidity_impact",
+    description="Compute intraday liquidity impact for a payment. Determines if releasing a payment would breach the minimum cash buffer, when the breach would occur, and by how much. Returns buffer breach risk assessment, payment context, account summary, concentration analysis, anomalies, and recommendations (HOLD or RELEASE).",
+    toolProperties=TOOL_PROPERTIES_LIQUIDITY_IMPACT
+)
+def compute_liquidity_impact_mcp(context: str) -> str:
+    """
+    MCP Tool trigger for liquidity impact computation.
+
+    This tool is used by AI agents to assess liquidity risk before releasing payments.
+    It reads from the treasury ledger and computes whether a payment would breach
+    minimum cash buffer thresholds.
+
+    Args:
+        context: JSON string containing the tool invocation arguments
+
+    Returns:
+        JSON string with the liquidity impact assessment
+    """
+    logging.info("MCP Tool: compute_liquidity_impact invoked")
+
+    try:
+        # Parse the MCP context
+        content = json.loads(context)
+        arguments = content.get("arguments", {})
+
+        logging.info(f"MCP Tool arguments: {arguments}")
+
+        # Extract parameters
+        payment_id = arguments.get("payment_id")
+
+        # Build hypothetical payment if individual fields are provided
+        hypothetical_payment = None
+        if not payment_id:
+            amount = arguments.get("amount")
+            currency = arguments.get("currency")
+            account_id = arguments.get("account_id")
+            entity = arguments.get("entity")
+
+            if amount and currency and account_id and entity:
+                hypothetical_payment = {
+                    "amount": float(amount),
+                    "currency": currency,
+                    "account_id": account_id,
+                    "entity": entity,
+                    "beneficiary_name": arguments.get("beneficiary_name", "Unknown"),
+                    "timestamp_utc": arguments.get("timestamp_utc", datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
+                }
+
+        if not payment_id and not hypothetical_payment:
+            return json.dumps({
+                "error": "Either payment_id OR (amount, currency, account_id, entity) must be provided",
+                "usage": {
+                    "option_1": "Provide payment_id to simulate releasing an existing queued payment",
+                    "option_2": "Provide amount, currency, account_id, entity for a hypothetical payment"
+                }
+            })
+
+        # Load data from blob storage
+        logging.info("Loading data from blob storage...")
+        ledger = load_blob_csv("curated/ledger_today.csv")
+        balances = load_blob_csv("curated/starting_balances.csv")
+        buffers = load_blob_json("curated/buffers.json")
+        logging.info(f"Loaded {len(ledger)} ledger rows, {len(balances)} balance rows, {len(buffers)} buffer rules")
+
+        # Compute liquidity impact
+        result = compute_liquidity_impact(
+            ledger=ledger,
+            balances=balances,
+            buffers=buffers,
+            payment_id=payment_id,
+            hypothetical_payment=hypothetical_payment,
+        )
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logging.error(f"MCP Tool error: {str(e)}")
+        return json.dumps({"error": str(e)})

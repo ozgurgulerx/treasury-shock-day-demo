@@ -9,7 +9,15 @@
     }
   },
   "extensionBundle": {
-    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "id": "Microsoft.Azure.Functions.ExtensionBundle.Experimental",
     "version": "[4.*, 5.0.0)"
+  },
+  "extensions": {
+    "mcp": {
+      "serverName": "LiquidityGate",
+      "serverVersion": "1.0.0",
+      "instructions": "Treasury Liquidity Gate MCP Server. Use the compute_liquidity_impact tool to assess whether releasing a payment would breach minimum cash buffer thresholds.",
+      "encryptClientState": false
+    }
   }
 }

@@ -62,7 +62,9 @@
       "Bash(az functionapp:*)",
       "Bash(func --version:*)",
       "Bash(az deployment group create:*)",
-      "Bash(zip -r:*)"
+      "Bash(zip -r:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }
