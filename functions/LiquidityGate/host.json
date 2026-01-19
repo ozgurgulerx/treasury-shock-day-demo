@@ -17,7 +17,10 @@
       "serverName": "LiquidityGate",
       "serverVersion": "1.0.0",
       "instructions": "Treasury Liquidity Gate MCP Server. Use the compute_liquidity_impact tool to assess whether releasing a payment would breach minimum cash buffer thresholds.",
-      "encryptClientState": false
+      "encryptClientState": false,
+      "system": {
+        "webhookAuthorizationLevel": "Anonymous"
+      }
     }
   }
 }
