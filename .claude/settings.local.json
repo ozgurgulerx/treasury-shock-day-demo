@@ -54,7 +54,10 @@
       "Bash(az apim api operation list:*)",
       "Bash(az apim product api list:*)",
       "Bash(az apim product list:*)",
-      "Bash(az apim product api add:*)"
+      "Bash(az apim product api add:*)",
+      "Bash(pip3 show:*)",
+      "Bash(az storage container create:*)",
+      "Bash(az storage blob upload:*)"
     ]
   }
 }

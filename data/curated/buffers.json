@@ -1,0 +1,44 @@
+[
+  {
+    "entity": "BankSubsidiary_TR",
+    "currency": "TRY",
+    "min_buffer": 45000000,
+    "cutoff_time_utc": "11:30",
+    "description": "Minimum TRY liquidity buffer for Turkish subsidiary"
+  },
+  {
+    "entity": "BankSubsidiary_TR",
+    "currency": "USD",
+    "min_buffer": 2000000,
+    "cutoff_time_utc": "15:00",
+    "description": "USD nostro buffer for SWIFT payments"
+  },
+  {
+    "entity": "BankSubsidiary_TR",
+    "currency": "EUR",
+    "min_buffer": 1500000,
+    "cutoff_time_utc": "14:00",
+    "description": "EUR buffer for SEPA payments"
+  },
+  {
+    "entity": "GroupTreasuryCo",
+    "currency": "TRY",
+    "min_buffer": 30000000,
+    "cutoff_time_utc": "11:30",
+    "description": "Group treasury TRY buffer"
+  },
+  {
+    "entity": "GroupTreasuryCo",
+    "currency": "USD",
+    "min_buffer": 5000000,
+    "cutoff_time_utc": "16:00",
+    "description": "Group treasury USD buffer"
+  },
+  {
+    "entity": "GroupTreasuryCo",
+    "currency": "EUR",
+    "min_buffer": 3000000,
+    "cutoff_time_utc": "14:00",
+    "description": "Group treasury EUR buffer"
+  }
+]
