@@ -1,0 +1,306 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "When_a_HTTP_request_is_received": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "summary": {
+                "type": "string",
+                "description": "Issue summary/title"
+              },
+              "description": {
+                "type": "string",
+                "description": "Detailed description of the escalation"
+              },
+              "priority": {
+                "type": "string",
+                "description": "Priority: Highest, High, Medium, Low, Lowest",
+                "enum": ["Highest", "High", "Medium", "Low", "Lowest"]
+              },
+              "source": {
+                "type": "string",
+                "description": "Source system: liquidity_gate, sanctions_screening",
+                "enum": ["liquidity_gate", "sanctions_screening", "manual"]
+              },
+              "payment": {
+                "type": "object",
+                "description": "Payment context",
+                "properties": {
+                  "payment_id": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "currency": { "type": "string" },
+                  "beneficiary": { "type": "string" },
+                  "account_id": { "type": "string" },
+                  "entity": { "type": "string" }
+                }
+              },
+              "decision": {
+                "type": "object",
+                "description": "Decision details from source system",
+                "properties": {
+                  "action": { "type": "string" },
+                  "reason": { "type": "string" },
+                  "confidence": { "type": "number" },
+                  "gap": { "type": "number" }
+                }
+              }
+            },
+            "required": ["summary"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Initialize_issueKey": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "issueKey",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "runAfter": {}
+      },
+      "Build_Description_ADF": {
+        "type": "Compose",
+        "inputs": {
+          "version": 1,
+          "type": "doc",
+          "content": [
+            {
+              "type": "heading",
+              "attrs": { "level": 2 },
+              "content": [{ "type": "text", "text": "Escalation Details" }]
+            },
+            {
+              "type": "table",
+              "attrs": { "isNumberColumnEnabled": false, "layout": "default" },
+              "content": [
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableHeader", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Field" }] }] },
+                    { "type": "tableHeader", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Value" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Source System", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['source'], 'manual')}" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Payment ID", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['payment']?['payment_id'], 'N/A')}" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Amount", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['payment']?['currency'], '')} @{coalesce(triggerBody()?['payment']?['amount'], 'N/A')}" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Beneficiary", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['payment']?['beneficiary'], 'N/A')}" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Decision", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['decision']?['action'], 'ESCALATE')}" }] }] }
+                  ]
+                },
+                {
+                  "type": "tableRow",
+                  "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Reason", "marks": [{ "type": "strong" }] }] }] },
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['decision']?['reason'], triggerBody()?['description'])}" }] }] }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": { "level": 3 },
+              "content": [{ "type": "text", "text": "Description" }]
+            },
+            {
+              "type": "paragraph",
+              "content": [{ "type": "text", "text": "@{coalesce(triggerBody()?['description'], 'No additional details provided.')}" }]
+            },
+            {
+              "type": "rule"
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Created by: ", "marks": [{ "type": "em" }] },
+                { "type": "text", "text": "Treasury Shock Day Demo - AI Agent Workflow" }
+              ]
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_issueKey": ["Succeeded"]
+        }
+      },
+      "Determine_Priority": {
+        "type": "Compose",
+        "inputs": "@coalesce(triggerBody()?['priority'], if(equals(triggerBody()?['decision']?['action'], 'BLOCK'), 'Highest', if(equals(triggerBody()?['decision']?['action'], 'HOLD'), 'High', 'Medium')))",
+        "runAfter": {
+          "Build_Description_ADF": ["Succeeded"]
+        }
+      },
+      "Build_Labels": {
+        "type": "Compose",
+        "inputs": [
+          "treasury-demo",
+          "escalation",
+          "@{coalesce(triggerBody()?['source'], 'manual')}",
+          "@{toLower(coalesce(triggerBody()?['decision']?['action'], 'review'))}"
+        ],
+        "runAfter": {
+          "Determine_Priority": ["Succeeded"]
+        }
+      },
+      "Create_Jira_Issue": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "@{appsetting('JIRA_SITE_URL')}/rest/api/3/issue",
+          "headers": {
+            "Authorization": "Basic @{appsetting('JIRA_AUTH_TOKEN')}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "fields": {
+              "project": {
+                "key": "@{appsetting('JIRA_PROJECT_KEY')}"
+              },
+              "summary": "@{triggerBody()?['summary']}",
+              "description": "@{outputs('Build_Description_ADF')}",
+              "issuetype": {
+                "name": "Task"
+              },
+              "priority": {
+                "name": "@{outputs('Determine_Priority')}"
+              },
+              "labels": "@{outputs('Build_Labels')}"
+            }
+          }
+        },
+        "runAfter": {
+          "Build_Labels": ["Succeeded"]
+        }
+      },
+      "Parse_Jira_Response": {
+        "type": "ParseJson",
+        "inputs": {
+          "content": "@body('Create_Jira_Issue')",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "key": { "type": "string" },
+              "self": { "type": "string" }
+            }
+          }
+        },
+        "runAfter": {
+          "Create_Jira_Issue": ["Succeeded"]
+        }
+      },
+      "Set_IssueKey": {
+        "type": "SetVariable",
+        "inputs": {
+          "name": "issueKey",
+          "value": "@body('Parse_Jira_Response')?['key']"
+        },
+        "runAfter": {
+          "Parse_Jira_Response": ["Succeeded"]
+        }
+      },
+      "Return_Success_Response": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 201,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "status": "created",
+            "issue": {
+              "key": "@{body('Parse_Jira_Response')?['key']}",
+              "id": "@{body('Parse_Jira_Response')?['id']}",
+              "url": "@{appsetting('JIRA_SITE_URL')}/browse/@{body('Parse_Jira_Response')?['key']}",
+              "api_url": "@{body('Parse_Jira_Response')?['self']}"
+            },
+            "input": {
+              "summary": "@{triggerBody()?['summary']}",
+              "priority": "@{outputs('Determine_Priority')}",
+              "source": "@{coalesce(triggerBody()?['source'], 'manual')}",
+              "payment_id": "@{coalesce(triggerBody()?['payment']?['payment_id'], null)}"
+            },
+            "audit": {
+              "workflow_run_id": "@{workflow()?['run']?['name']}",
+              "timestamp_utc": "@{utcNow()}",
+              "version": "1.0"
+            }
+          }
+        },
+        "runAfter": {
+          "Set_IssueKey": ["Succeeded"]
+        }
+      },
+      "Return_Error_Response": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 500,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "status": "error",
+            "error": {
+              "message": "Failed to create Jira issue",
+              "details": "@{body('Create_Jira_Issue')}",
+              "status_code": "@{outputs('Create_Jira_Issue')?['statusCode']}"
+            },
+            "input": {
+              "summary": "@{triggerBody()?['summary']}"
+            },
+            "audit": {
+              "workflow_run_id": "@{workflow()?['run']?['name']}",
+              "timestamp_utc": "@{utcNow()}"
+            }
+          }
+        },
+        "runAfter": {
+          "Create_Jira_Issue": ["Failed", "TimedOut"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}
