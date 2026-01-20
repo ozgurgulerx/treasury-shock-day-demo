@@ -2,6 +2,7 @@
 Liquidity Gate Azure Function
 =============================
 Deterministic intraday liquidity impact simulation.
+(PostgreSQL Version using pg8000)
 
 Given an emergency payment, computes:
 1. If releasing this payment breaches the minimum cash buffer
@@ -12,51 +13,104 @@ Given an emergency payment, computes:
 
 import azure.functions as func
 import json
-import csv
-import io
 import logging
 import os
 import uuid
+import traceback
 from datetime import datetime
 from collections import defaultdict
-from azure.storage.blob import BlobServiceClient
-from azure.identity import DefaultAzureCredential
+from decimal import Decimal
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# Configuration
-STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "sttreasurydemo01")
-CONTAINER_NAME = os.environ.get("STORAGE_CONTAINER", "treasury-demo")
-BLOB_ENDPOINT = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
-
-# Cache for blob data (refreshed per request for now)
-_blob_client = None
-
-
-def get_blob_client():
-    """Get or create blob service client using managed identity."""
-    global _blob_client
-    if _blob_client is None:
-        credential = DefaultAzureCredential()
-        _blob_client = BlobServiceClient(account_url=BLOB_ENDPOINT, credential=credential)
-    return _blob_client
+# Database Configuration
+DB_CONFIG = {
+    'host': os.environ.get('DB_HOST', 'treasurydb.postgres.database.azure.com'),
+    'database': os.environ.get('DB_NAME', 'treasurydb'),
+    'user': os.environ.get('DB_USER', 'dbadmin'),
+    'password': os.environ.get('db_password'),
+}
 
 
-def load_blob_csv(blob_name: str) -> list[dict]:
-    """Load CSV from blob storage."""
-    client = get_blob_client()
-    blob_client = client.get_blob_client(container=CONTAINER_NAME, blob=blob_name)
-    content = blob_client.download_blob().readall().decode('utf-8')
-    reader = csv.DictReader(io.StringIO(content))
-    return list(reader)
+def get_db_connection():
+    """Create a database connection using pg8000."""
+    import pg8000.native
+    return pg8000.native.Connection(
+        host=DB_CONFIG['host'],
+        database=DB_CONFIG['database'],
+        user=DB_CONFIG['user'],
+        password=DB_CONFIG['password'],
+        ssl_context=True,
+        timeout=30,
+    )
 
 
-def load_blob_json(blob_name: str) -> list | dict:
-    """Load JSON from blob storage."""
-    client = get_blob_client()
-    blob_client = client.get_blob_client(container=CONTAINER_NAME, blob=blob_name)
-    content = blob_client.download_blob().readall().decode('utf-8')
-    return json.loads(content)
+def convert_value(val):
+    """Convert database values for JSON serialization."""
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, datetime):
+        return val.strftime('%Y-%m-%d %H:%M:%S')
+    return val
+
+
+def load_ledger() -> list[dict]:
+    """Load ledger transactions from PostgreSQL."""
+    conn = get_db_connection()
+    rows = conn.run("""
+        SELECT
+            txn_id,
+            TO_CHAR(timestamp_utc, 'YYYY-MM-DD HH24:MI:SS') as timestamp_utc,
+            entity,
+            account_id,
+            beneficiary_name,
+            payment_type,
+            amount,
+            direction,
+            currency,
+            status,
+            alert_flag,
+            channel
+        FROM treasury.ledger_today
+        ORDER BY timestamp_utc
+    """)
+    columns = ['txn_id', 'timestamp_utc', 'entity', 'account_id', 'beneficiary_name',
+               'payment_type', 'amount', 'direction', 'currency', 'status', 'alert_flag', 'channel']
+    conn.close()
+    return [{col: convert_value(val) for col, val in zip(columns, row)} for row in rows]
+
+
+def load_balances() -> list[dict]:
+    """Load starting balances from PostgreSQL."""
+    conn = get_db_connection()
+    rows = conn.run("""
+        SELECT
+            entity,
+            account_id,
+            currency,
+            start_of_day_balance
+        FROM treasury.starting_balances
+    """)
+    columns = ['entity', 'account_id', 'currency', 'start_of_day_balance']
+    conn.close()
+    return [{col: convert_value(val) for col, val in zip(columns, row)} for row in rows]
+
+
+def load_buffers() -> list[dict]:
+    """Load buffer thresholds from PostgreSQL."""
+    conn = get_db_connection()
+    rows = conn.run("""
+        SELECT
+            entity,
+            currency,
+            min_buffer,
+            TO_CHAR(cutoff_time_utc, 'HH24:MI') as cutoff_time_utc,
+            description
+        FROM treasury.buffers
+    """)
+    columns = ['entity', 'currency', 'min_buffer', 'cutoff_time_utc', 'description']
+    conn.close()
+    return [{col: convert_value(val) for col, val in zip(columns, row)} for row in rows]
 
 
 def parse_timestamp(ts: str) -> datetime:
@@ -203,7 +257,6 @@ def compute_liquidity_impact(
     min_balance = starting_balance
     min_balance_time = None
     first_breach_time = None
-    first_breach_balance = None
     breach_gap = 0
     balance_trajectory = []
 
@@ -241,7 +294,6 @@ def compute_liquidity_impact(
         # Check for buffer breach
         if balance < buffer_threshold and first_breach_time is None:
             first_breach_time = txn['timestamp_str']
-            first_breach_balance = balance
             breach_gap = buffer_threshold - balance
 
         # Collect anomalies
@@ -314,7 +366,8 @@ def compute_liquidity_impact(
                 "buffer_rules": len(buffers),
             },
             "cutoff_time": cutoff_time,
-            "version": "1.0.0",
+            "version": "2.0.0",
+            "data_source": "PostgreSQL (pg8000)",
         },
     }
 
@@ -339,18 +392,6 @@ def compute_liquidity_impact_http(req: func.HttpRequest) -> func.HttpResponse:
         },
         "entity_filter": "BankSubsidiary_TR",  // optional
         "currency_filter": "USD"  // optional
-    }
-
-    Response:
-    {
-        "buffer_breach_risk": {
-            "breach": true/false,
-            "first_breach_time": "2026-01-19 10:25:00",
-            "gap": 50000,
-            "projected_balance_min": 1950000,
-            ...
-        },
-        ...
     }
     """
     logging.info("Liquidity impact computation requested")
@@ -378,11 +419,11 @@ def compute_liquidity_impact_http(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     try:
-        # Load data from blob storage
-        logging.info("Loading data from blob storage...")
-        ledger = load_blob_csv("curated/ledger_today.csv")
-        balances = load_blob_csv("curated/starting_balances.csv")
-        buffers = load_blob_json("curated/buffers.json")
+        # Load data from PostgreSQL
+        logging.info("Loading data from PostgreSQL...")
+        ledger = load_ledger()
+        balances = load_balances()
+        buffers = load_buffers()
         logging.info(f"Loaded {len(ledger)} ledger rows, {len(balances)} balance rows, {len(buffers)} buffer rules")
 
         # Compute liquidity impact
@@ -405,76 +446,42 @@ def compute_liquidity_impact_http(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logging.error(f"Error computing liquidity impact: {str(e)}")
         return func.HttpResponse(
-            json.dumps({"error": str(e)}),
+            json.dumps({"error": str(e), "traceback": traceback.format_exc()}),
             status_code=500,
             mimetype="application/json"
         )
 
 
-@app.route(route="health", methods=["GET"])
-def health_check(req: func.HttpRequest) -> func.HttpResponse:
-    """Health check endpoint."""
+@app.route(route="ping", methods=["GET"])
+def ping_check(req: func.HttpRequest) -> func.HttpResponse:
+    """Simple ping endpoint - no database."""
     return func.HttpResponse(
         json.dumps({
-            "status": "healthy",
-            "service": "LiquidityGate",
-            "version": "1.0.0",
-            "storage_account": STORAGE_ACCOUNT,
-            "container": CONTAINER_NAME,
-        }),
+            "status": "pong",
+            "message": "Function is running with pg8000!",
+            "env_vars": {
+                "DB_HOST": DB_CONFIG['host'],
+                "DB_USER": DB_CONFIG['user'],
+                "has_password": bool(DB_CONFIG['password'])
+            }
+        }, indent=2),
         status_code=200,
         mimetype="application/json"
     )
 
 
 # =============================================================================
-# MCP Tool Trigger
+# MCP Tool Triggers for AI Agent Integration
 # =============================================================================
 
-# Define tool properties for the MCP tool
 TOOL_PROPERTIES_LIQUIDITY_IMPACT = json.dumps([
-    {
-        "propertyName": "payment_id",
-        "propertyType": "string",
-        "description": "The transaction ID of a queued payment to simulate releasing (e.g., TXN-EMRG-001). Either payment_id or hypothetical_payment must be provided.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "amount",
-        "propertyType": "number",
-        "description": "Payment amount for hypothetical payment simulation. Required if payment_id is not provided.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "currency",
-        "propertyType": "string",
-        "description": "Currency code (USD, TRY, EUR) for hypothetical payment. Required if payment_id is not provided.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "account_id",
-        "propertyType": "string",
-        "description": "Account ID for hypothetical payment (e.g., ACC-BAN-001). Required if payment_id is not provided.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "entity",
-        "propertyType": "string",
-        "description": "Entity name for hypothetical payment (e.g., BankSubsidiary_TR). Required if payment_id is not provided.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "beneficiary_name",
-        "propertyType": "string",
-        "description": "Beneficiary name for hypothetical payment.",
-        "isRequired": False
-    },
-    {
-        "propertyName": "timestamp_utc",
-        "propertyType": "string",
-        "description": "Timestamp for hypothetical payment (format: YYYY-MM-DD HH:MM:SS).",
-        "isRequired": False
-    }
+    {"propertyName": "payment_id", "propertyType": "string", "description": "Transaction ID of a queued payment to simulate (e.g., TXN-EMRG-001)", "isRequired": False},
+    {"propertyName": "amount", "propertyType": "number", "description": "Amount for hypothetical payment simulation", "isRequired": False},
+    {"propertyName": "currency", "propertyType": "string", "description": "Currency code (e.g., USD, TRY, EUR)", "isRequired": False},
+    {"propertyName": "account_id", "propertyType": "string", "description": "Account ID (e.g., ACC-BAN-001)", "isRequired": False},
+    {"propertyName": "entity", "propertyType": "string", "description": "Entity name (e.g., BankSubsidiary_TR)", "isRequired": False},
+    {"propertyName": "beneficiary_name", "propertyType": "string", "description": "Beneficiary name", "isRequired": False},
+    {"propertyName": "timestamp_utc", "propertyType": "string", "description": "Payment timestamp (YYYY-MM-DD HH:MM:SS)", "isRequired": False}
 ])
 
 
@@ -482,70 +489,37 @@ TOOL_PROPERTIES_LIQUIDITY_IMPACT = json.dumps([
     arg_name="context",
     type="mcpToolTrigger",
     toolName="compute_liquidity_impact",
-    description="Compute intraday liquidity impact for a payment. Determines if releasing a payment would breach the minimum cash buffer, when the breach would occur, and by how much. Returns buffer breach risk assessment, payment context, account summary, concentration analysis, anomalies, and recommendations (HOLD or RELEASE).",
+    description="Compute intraday liquidity impact for a payment. Determines if releasing a payment would breach minimum cash buffer thresholds. Returns breach status, timing, gap amount, and recommendations.",
     toolProperties=TOOL_PROPERTIES_LIQUIDITY_IMPACT
 )
 def compute_liquidity_impact_mcp(context: str) -> str:
-    """
-    MCP Tool trigger for liquidity impact computation.
-
-    This tool is used by AI agents to assess liquidity risk before releasing payments.
-    It reads from the treasury ledger and computes whether a payment would breach
-    minimum cash buffer thresholds.
-
-    Args:
-        context: JSON string containing the tool invocation arguments
-
-    Returns:
-        JSON string with the liquidity impact assessment
-    """
-    logging.info("MCP Tool: compute_liquidity_impact invoked")
+    """MCP Tool: Compute liquidity impact of a payment."""
+    logging.info(f"MCP compute_liquidity_impact called with context: {context}")
 
     try:
-        # Parse the MCP context
         content = json.loads(context)
         arguments = content.get("arguments", {})
 
-        logging.info(f"MCP Tool arguments: {arguments}")
-
-        # Extract parameters
         payment_id = arguments.get("payment_id")
-
-        # Build hypothetical payment if individual fields are provided
         hypothetical_payment = None
-        if not payment_id:
-            amount = arguments.get("amount")
-            currency = arguments.get("currency")
-            account_id = arguments.get("account_id")
-            entity = arguments.get("entity")
 
-            if amount and currency and account_id and entity:
-                hypothetical_payment = {
-                    "amount": float(amount),
-                    "currency": currency,
-                    "account_id": account_id,
-                    "entity": entity,
-                    "beneficiary_name": arguments.get("beneficiary_name", "Unknown"),
-                    "timestamp_utc": arguments.get("timestamp_utc", datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
-                }
+        if not payment_id and arguments.get("amount"):
+            hypothetical_payment = {
+                "amount": arguments.get("amount"),
+                "currency": arguments.get("currency", "USD"),
+                "account_id": arguments.get("account_id"),
+                "entity": arguments.get("entity"),
+                "beneficiary_name": arguments.get("beneficiary_name", "Unknown"),
+                "timestamp_utc": arguments.get("timestamp_utc"),
+            }
 
         if not payment_id and not hypothetical_payment:
-            return json.dumps({
-                "error": "Either payment_id OR (amount, currency, account_id, entity) must be provided",
-                "usage": {
-                    "option_1": "Provide payment_id to simulate releasing an existing queued payment",
-                    "option_2": "Provide amount, currency, account_id, entity for a hypothetical payment"
-                }
-            })
+            return json.dumps({"error": "Either payment_id or hypothetical payment parameters required"})
 
-        # Load data from blob storage
-        logging.info("Loading data from blob storage...")
-        ledger = load_blob_csv("curated/ledger_today.csv")
-        balances = load_blob_csv("curated/starting_balances.csv")
-        buffers = load_blob_json("curated/buffers.json")
-        logging.info(f"Loaded {len(ledger)} ledger rows, {len(balances)} balance rows, {len(buffers)} buffer rules")
+        ledger = load_ledger()
+        balances = load_balances()
+        buffers = load_buffers()
 
-        # Compute liquidity impact
         result = compute_liquidity_impact(
             ledger=ledger,
             balances=balances,
@@ -555,7 +529,62 @@ def compute_liquidity_impact_mcp(context: str) -> str:
         )
 
         return json.dumps(result, indent=2)
-
     except Exception as e:
         logging.error(f"MCP Tool error: {str(e)}")
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": str(e), "traceback": traceback.format_exc()})
+
+
+@app.route(route="health", methods=["GET"])
+def health_check(req: func.HttpRequest) -> func.HttpResponse:
+    """Health check endpoint with database connectivity check."""
+    db_status = "unknown"
+    db_error = None
+    row_counts = {}
+
+    try:
+        conn = get_db_connection()
+
+        # Test basic connectivity
+        conn.run("SELECT 1")
+        db_status = "connected"
+
+        # Get row counts from treasury tables
+        try:
+            ledger_count = conn.run("SELECT COUNT(*) FROM treasury.ledger_today")[0][0]
+            balance_count = conn.run("SELECT COUNT(*) FROM treasury.starting_balances")[0][0]
+            buffer_count = conn.run("SELECT COUNT(*) FROM treasury.buffers")[0][0]
+            row_counts = {
+                "ledger_today": ledger_count,
+                "starting_balances": balance_count,
+                "buffers": buffer_count
+            }
+        except Exception as e:
+            row_counts = {"error": str(e)}
+
+        conn.close()
+    except Exception as e:
+        db_status = "error"
+        db_error = traceback.format_exc()
+
+    status = "healthy" if db_status == "connected" else "degraded"
+
+    response = {
+        "status": status,
+        "service": "LiquidityGate",
+        "version": "2.0.0",
+        "database": {
+            "host": DB_CONFIG['host'],
+            "database": DB_CONFIG['database'],
+            "status": db_status,
+            "row_counts": row_counts if row_counts else None,
+        }
+    }
+
+    if db_error:
+        response["database"]["error"] = db_error
+
+    return func.HttpResponse(
+        json.dumps(response, indent=2),
+        status_code=200 if status == "healthy" else 503,
+        mimetype="application/json"
+    )
