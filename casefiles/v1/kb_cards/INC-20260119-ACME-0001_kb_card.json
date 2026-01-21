@@ -1,0 +1,31 @@
+{
+  "id": "INC-20260119-ACME-0001-kb",
+  "doc_type": "incident_casefile",
+  "title": "INC-20260119-ACME-0001 — CLEAR sanctions + USD buffer breach → HOLD",
+  "incident_id": "INC-20260119-ACME-0001",
+  "entity": "BankSubsidiary_TR",
+  "account_id": "ACC-BAN-001",
+  "currency": "USD",
+  "beneficiary_name": "ACME Trading LLC",
+  "amount": 250000,
+  "sanctions_decision": "CLEAR",
+  "liquidity_breach": true,
+  "breach_gap": 50000,
+  "cutoff_time_utc": "15:00",
+  "decision": "HOLD",
+  "approvals_required": ["Treasury Manager", "Head of Treasury (override)"],
+  "audit_artifacts": [
+    "sanctions_screening_result.json",
+    "liquidity_impact_assessment.json",
+    "policy_liquidity_buffers.md citation",
+    "HOLD_memo_signed.pdf"
+  ],
+  "tool_run_ids": {
+    "sanctions": "san-4d91b8c7-2026-0119-1025",
+    "liquidity": "liq-a1b2c3d4-2026-0119-1025"
+  },
+  "created_at_utc": "2026-01-19T10:26:12Z",
+  "resolved_at_utc": null,
+  "resolution_notes": "Pending treasury review. Options: delay to T+1, partial release, or override with Head of Treasury approval.",
+  "content": "Emergency payment TXN-EMRG-001 to ACME Trading LLC for USD 250,000 submitted at 10:25 UTC on 2026-01-19. Beneficiary is a new counterparty with no prior transaction history. Sanctions screening returned CLEAR with 0% match confidence. Liquidity gate assessment: starting balance USD 2,200,000, projected balance after payment USD 1,950,000, minimum buffer threshold USD 2,000,000. Buffer breach detected with gap of USD 50,000. Cutoff time for USD SWIFT is 15:00 UTC. Per runbook_emergency_payment.md Section 6.1, payment placed on HOLD pending Treasury Manager review. Options presented: (A) delay to next business day, (B) partial release of USD 150,000 to maintain buffer, (C) request intercompany funding from GroupTreasuryCo, (D) override with documented business justification requiring Treasury Manager + Head of Treasury dual approval per policy_approval_matrix.md. Audit bundle initiated with sanctions tool run ID san-4d91b8c7, liquidity tool run ID liq-a1b2c3d4, and policy citations attached."
+}

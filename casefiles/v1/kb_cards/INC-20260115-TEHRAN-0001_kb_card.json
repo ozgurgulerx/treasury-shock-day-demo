@@ -1,0 +1,32 @@
+{
+  "id": "INC-20260115-TEHRAN-0001-kb",
+  "doc_type": "incident_casefile",
+  "title": "INC-20260115-TEHRAN-0001 — BLOCK sanctions → REJECT + SAR filed",
+  "incident_id": "INC-20260115-TEHRAN-0001",
+  "entity": "BankSubsidiary_TR",
+  "account_id": "ACC-Ban-023",
+  "currency": "USD",
+  "beneficiary_name": "Tehran Industrial Supply Co",
+  "amount": 450000,
+  "sanctions_decision": "BLOCK",
+  "liquidity_breach": false,
+  "breach_gap": 0,
+  "cutoff_time_utc": "15:00",
+  "decision": "REJECT",
+  "approvals_required": ["Compliance Officer (rejection)", "MLRO (SAR filing)"],
+  "audit_artifacts": [
+    "sanctions_screening_result.json",
+    "sanctions_case_file.pdf",
+    "SAR_filing_reference.pdf",
+    "OFAC_blocking_report.pdf",
+    "originator_notification_generic.pdf"
+  ],
+  "tool_run_ids": {
+    "sanctions": "san-e5f6a7b8-2026-0115-0845",
+    "liquidity": "liq-f6a7b8c9-2026-0115-0845"
+  },
+  "created_at_utc": "2026-01-15T08:47:00Z",
+  "resolved_at_utc": "2026-01-15T09:15:00Z",
+  "resolution_notes": "Confirmed sanctions match. Payment rejected. SAR filed. OFAC blocking report submitted.",
+  "content": "Urgent supplier payment TXN-URG-0023 to Tehran Industrial Supply Co for USD 450,000 submitted at 08:45 UTC on 2026-01-15. Sanctions screening returned BLOCK with 98% match confidence. EXACT match detected against OFAC SDN - beneficiary name matches sanctioned entity under programs IRAN and IRAN-EO13902. Search score 14.2 exceeded BLOCK threshold per compliance_sanctions_escalation.md Section 3.1. Payment REJECTED immediately per runbook_emergency_payment.md Section 8. Compliance Officer notified at 08:48 UTC. MLRO engaged at 08:52 UTC. Decision confirmed: beneficiary appears on OFAC SDN list with matching name pattern and Iran nexus. No release under any circumstances. Originator notified with generic compliance message at 09:00 UTC - no sanctions-specific information disclosed per policy. SAR filing initiated at 09:10 UTC - suspicious activity indicators include: (1) new beneficiary with Iran-associated name, (2) large single payment, (3) categorized as 'urgent supplier' despite no prior relationship. OFAC blocking report prepared for submission within 10 business day requirement. Full sanctions case file archived with permanent retention. Case closed - payment blocked, regulatory filings completed."
+}

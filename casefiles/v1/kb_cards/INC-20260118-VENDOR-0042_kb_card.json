@@ -1,0 +1,29 @@
+{
+  "id": "INC-20260118-VENDOR-0042-kb",
+  "doc_type": "incident_casefile",
+  "title": "INC-20260118-VENDOR-0042 — CLEAR sanctions + no breach → RELEASE",
+  "incident_id": "INC-20260118-VENDOR-0042",
+  "entity": "BankSubsidiary_TR",
+  "account_id": "ACC-Ban-007",
+  "currency": "EUR",
+  "beneficiary_name": "Deutsche Logistics GmbH",
+  "amount": 85000,
+  "sanctions_decision": "CLEAR",
+  "liquidity_breach": false,
+  "breach_gap": 0,
+  "cutoff_time_utc": "14:00",
+  "decision": "RELEASE",
+  "approvals_required": ["Payments Operator"],
+  "audit_artifacts": [
+    "sanctions_screening_result.json",
+    "liquidity_impact_assessment.json"
+  ],
+  "tool_run_ids": {
+    "sanctions": "san-7e82f1a9-2026-0118-0915",
+    "liquidity": "liq-b2c3d4e5-2026-0118-0915"
+  },
+  "created_at_utc": "2026-01-18T09:16:00Z",
+  "resolved_at_utc": "2026-01-18T09:18:30Z",
+  "resolution_notes": "Standard processing. No issues detected.",
+  "content": "Vendor payment TXN-000142 to Deutsche Logistics GmbH for EUR 85,000 submitted at 09:15 UTC on 2026-01-18. Established beneficiary with 24-month transaction history. Sanctions screening returned CLEAR with 0% match confidence - no hits against OFAC SDN, EU consolidated list, or UN sanctions. Liquidity gate assessment: starting balance EUR 1,800,030, projected balance after payment EUR 1,715,030, minimum buffer threshold EUR 1,500,000. No buffer breach - headroom of EUR 215,030 (14.3% above minimum). Payment within standard amount threshold (< EUR 250,000), processed by Payments Operator without additional approval per policy_approval_matrix.md Section 3.1. Released via SEPA at 09:18 UTC, well before 14:00 UTC cutoff. Standard audit bundle attached with tool run IDs. Case closed - routine processing."
+}
