@@ -95,7 +95,15 @@
       "Bash(grep:*)",
       "Bash(while read commit msg)",
       "Bash(done)",
-      "Bash(jq -c '{status, service, version, db_status: .database.status, rows: .database.row_counts}' __NEW_LINE_b1ced400374dab47__ echo \"\" echo \"2. HTTP API Test \\(TXN-EMRG-001\\)\" curl -s --max-time 15 -X POST \"https://liquidity-gate-func.azurewebsites.net/api/compute_liquidity_impact\" -H \"Content-Type: application/json\" -d '{\"\"\"\"payment_id\"\"\"\":\"\"\"\"TXN-EMRG-001\"\"\"\"}')"
+      "Bash(jq -c '{status, service, version, db_status: .database.status, rows: .database.row_counts}' __NEW_LINE_b1ced400374dab47__ echo \"\" echo \"2. HTTP API Test \\(TXN-EMRG-001\\)\" curl -s --max-time 15 -X POST \"https://liquidity-gate-func.azurewebsites.net/api/compute_liquidity_impact\" -H \"Content-Type: application/json\" -d '{\"\"\"\"payment_id\"\"\"\":\"\"\"\"TXN-EMRG-001\"\"\"\"}')",
+      "Bash(1 echo \"Response body:\" cat /tmp/sanctions_response.txt)",
+      "Bash(az storage blob upload-batch:*)",
+      "Bash(az ad signed-in-user:*)",
+      "Bash(source:*)",
+      "Bash(brew install:*)",
+      "Bash(azcopy:*)",
+      "Bash(export AZCOPY_AUTO_LOGIN_TYPE=AZCLI)",
+      "Bash(az storage container list:*)"
     ]
   }
 }
