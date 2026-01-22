@@ -103,7 +103,12 @@
       "Bash(brew install:*)",
       "Bash(azcopy:*)",
       "Bash(export AZCOPY_AUTO_LOGIN_TYPE=AZCLI)",
-      "Bash(az storage container list:*)"
+      "Bash(az storage container list:*)",
+      "Bash(for i in 1 2 3)",
+      "Bash(do)",
+      "Bash(az monitor app-insights query:*)",
+      "Bash(az monitor app-insights component show:*)",
+      "Bash(az webapp deployment:*)"
     ]
   }
 }
