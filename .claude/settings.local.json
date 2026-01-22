@@ -108,7 +108,11 @@
       "Bash(do)",
       "Bash(az monitor app-insights query:*)",
       "Bash(az monitor app-insights component show:*)",
-      "Bash(az webapp deployment:*)"
+      "Bash(az webapp deployment:*)",
+      "Bash(az postgres server firewall-rule list:*)",
+      "Bash(az postgres flexible-server start:*)",
+      "Bash(az role assignment create:*)",
+      "Bash(git tag:*)"
     ]
   }
 }
